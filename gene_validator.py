@@ -1,42 +1,54 @@
 import csv
 import gzip
 import re
-import sys
 import tempfile
 from typing import Optional
 
 import requests
 from requests import HTTPError
+from requests.compat import urljoin
 
 
 class GeneValidator:
-    raw_data_path: str = './data/raw.txt'
-    chunk_size: int = 512
+    RAW_DATA_PATH: str = './data/raw.txt'
+    RESULT_PATH: str = './data/result.txt'
+    BASE_URL: str = 'https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/'
+    CHUNK_SIZE: int = 512
+    URL_MAPPING = {
+        "All Mammalia": "All_Mammalia.gene_info.gz",
+        "Bos taurus": "Bos_taurus.gene_info.gz",
+        "Canis familiaris": "Canis_familiaris.gene_info.gz",
+        "Homo sapiens": "Homo_sapiens.gene_info.gz",
+        "Mus musculus": "Mus_musculus.gene_info.gz",
+        "Pan troglodytes": "Pan_troglodytes.gene_info.gz",
+        "Rattus norvegicus": "Rattus_norvegicus.gene_info.gz",
+        "Sus scrofa": "Sus_scrofa.gene_info.gz"
+    }
 
-    def __init__(self, path: str, base_url: str = 'https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/',
-                 result_path: str = './data/result.txt'):
-        self.base_url = base_url
-        self.result_path = result_path
-        self.url = self.base_url + path
-        self._response = self._get_response(self.url)
+    def __init__(self, name: str):
+        path = self.URL_MAPPING.get(name)
+        if not path:
+            raise ValueError(f'Invalid name. Available names are: {", ".join(self.URL_MAPPING.keys())}')
+        self.url = urljoin(self.BASE_URL, path)
+        self.response = self.get_response()
 
-    def _get_response(self, url: str) -> Optional[requests.Response]:
+    def get_response(self) -> Optional[requests.Response]:
         """
         Receives a response from the server at the given URL.
-        :param url: url to get data from
-        :return: bytes
+        :return: bytes or None
         """
         try:
             response: requests.Response = requests.get(self.url)
             response.raise_for_status()
-        except HTTPError:
-            print(f'{url} is not a valid')
-            raise
+            return response
+        except HTTPError as e:
+            print(f'{self.url} is not a valid. {e.errno}')
+        except requests.RequestException as e:
+            print(f'No response from {self.url}. {e.errno}')
 
-        return response
+        return None
 
-    @staticmethod
-    def get_text_data(path: str) -> list[str]:
+    def get_text_data(self, path: str) -> list[str]:
         """
         Reads raw data from a text file
         :param path: path to file
@@ -54,7 +66,7 @@ class GeneValidator:
         """
         ref: dict[str, str] = {}
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            with self._response as fd:
+            with self.response as fd:
                 # for chunk in fd.iter_content(chunk_size=self.chunk_size):
                 #     temp_file.write(chunk)
                 temp_file.write(fd.content)
@@ -71,8 +83,7 @@ class GeneValidator:
 
             return ref
 
-    @staticmethod
-    def check_values(line: list[str], reference: dict[str, str]) -> bool:
+    def check_values(self, line: list[str], reference: dict[str, str]) -> bool:
         """
         Checks if all elements in a line are present in the reference dictionary
         :param line: a string of genes
@@ -81,8 +92,7 @@ class GeneValidator:
         """
         return all(gene in reference.keys() for gene in line)
 
-    @staticmethod
-    def write_to_file(clean: list[str], bad: list[str], path: str) -> None:
+    def write_to_file(self, clean: list[str], bad: list[str], path: str) -> None:
         """
         Writes the contents of the clean and bad lists to a file at the specified path.
         At the beginning of the file, the label "CLEAN" is recorded,
@@ -119,7 +129,7 @@ class GeneValidator:
         bad_data: list[str] = []
 
         ref_data: dict[str, str] = self.get_ref_data()
-        raw_data: list[str] = self.get_text_data(self.raw_data_path)
+        raw_data: list[str] = self.get_text_data(self.RAW_DATA_PATH)
 
         for idx, row in enumerate(raw_data):
             clear_line: list[str] = re.sub(r'[^\w-]', ' ', row).split()
@@ -129,10 +139,10 @@ class GeneValidator:
             else:
                 clear_data.append(' '.join([ref_data[gene] for gene in clear_line]))
 
-        self.write_to_file(clear_data, bad_data, self.result_path)
+        self.write_to_file(clear_data, bad_data, self.RESULT_PATH)
 
 
 if __name__ == '__main__':
-    filename: str = sys.stdin.readline().strip()
+    filename: str = 'Homo sapiens'
     gene_validator: GeneValidator = GeneValidator(filename)
     gene_validator.validate()
